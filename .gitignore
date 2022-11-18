@@ -272,6 +272,7 @@ Thumbs.db
 wandb/
 examples/runs/
 output/
+runs/
 
 # others
 layoutlmft.egg-info/
