@@ -28,6 +28,7 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version
 
+from sklearn.metrics import recall_score, precision_score, f1_score, accuracy_score
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.5.0")
@@ -86,7 +87,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    label_list = ['paragraph', 'reference', 'equation', 'list', 'section', 'caption', 'figure', 'footer', 'abstract', 'table', 'title', 'author', 'date']
+    label_list = ['paragraph', 'title', 'equation', 'reference', 'section', 'list', 'table', 'caption', 'author', 'abstract', 'footer', 'date', 'figure']
     num_labels = len(label_list)
 
     # Load pretrained model and tokenizer
@@ -165,39 +166,32 @@ def main():
 
     # Metrics
     metric = load_metric("seqeval")
+    valid_labels = range(num_labels)
 
     def compute_metrics(p):
         predictions, labels = p
         predictions = np.argmax(predictions, axis=2)
 
         # Remove ignored index (special tokens)
-        true_predictions = [
-            [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+        true_predictions = list(chain(*[
+            [p for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
-        ]
-        true_labels = [
-            [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+        ]))
+        true_labels = list(chain(*[
+            [l for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
-        ]
+        ]))
 
-        results = metric.compute(predictions=true_predictions, references=true_labels)
-        if data_args.return_entity_level_metrics:
-            # Unpack nested dictionaries
-            final_results = {}
-            for key, value in results.items():
-                if isinstance(value, dict):
-                    for n, v in value.items():
-                        final_results[f"{key}_{n}"] = v
-                else:
-                    final_results[key] = value
-            return final_results
-        else:
-            return {
-                "precision": results["overall_precision"],
-                "recall": results["overall_recall"],
-                "f1": results["overall_f1"],
-                "accuracy": results["overall_accuracy"],
-            }
+        rec_sco = recall_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
+        pre_sco = precision_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
+        f1_sco = f1_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
+        acc_sco = accuracy_score(y_true=true_labels, y_pred=true_predictions)
+        return {
+            "precision": pre_sco,
+            "recall": rec_sco,
+            "f1": f1_sco,
+            "accuracy": acc_sco,
+        }
 
     # Initialize our Trainer
     trainer = Trainer(

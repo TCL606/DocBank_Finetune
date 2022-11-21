@@ -4,7 +4,7 @@ model=microsoft/layoutlm-base-uncased
 wandb_name=$model-docbank
 
 epoch=1
-bs_per_gpu=16
+bs_per_gpu=4
 lr=5e-5
 eval_step=1000
 
@@ -18,9 +18,11 @@ python3 run_docbank.py --model_name_or_path $model \
                 --do_predict \
                 --num_train_epochs $epoch \
                 --per_device_train_batch_size $bs_per_gpu \
+                --per_device_eval_batch_size $bs_per_gpu \
                 --learning_rate $lr \
                 --max_steps -1 \
                 --warmup_ratio 0.1 \
+                --dataloader_num_workers 4 \
                 --fp16 \
                 --report_to wandb \
                 --run_name $wandb_name

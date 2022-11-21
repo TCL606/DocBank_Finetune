@@ -1,6 +1,6 @@
 import os
 import random
-
+from itertools import chain
 import numpy as np
 from PIL import Image, ImageDraw
 from tqdm import tqdm
@@ -55,29 +55,29 @@ class DocBankMetaData:
     def label2id(cls, label) -> int:
         if label == 'paragraph':
             return 0
-        elif label == 'reference':
+        elif label == 'title':
             return 1
         elif label == 'equation':
             return 2
-        elif label == 'list':
+        elif label == 'reference':
             return 3
         elif label == 'section':
             return 4
-        elif label == 'caption':
+        elif label == 'list':
             return 5
-        elif label == 'figure':
-            return 6
-        elif label == 'footer':
-            return 7
-        elif label == 'abstract':
-            return 8
         elif label == 'table':
-            return 9
-        elif label == 'title':
-            return 10
+            return 6
+        elif label == 'caption':
+            return 7
         elif label == 'author':
-            return 11
+            return 8
+        elif label == 'abstract':
+            return 9
+        elif label == 'footer':
+            return 10
         elif label == 'date':
+            return 11
+        elif label == 'figure':
             return 12
         else:
             raise Exception('Invalid label!')       
@@ -96,7 +96,8 @@ class DocBankDataset(Dataset):
             data = json.load(fp)
 
         self.basenames_list = [metadata['file_name'].replace('_ori.jpg', '') for metadata in data['images']]
-        
+        if mode != 'train':
+            self.basenames_list = self.basenames_list[: 100]
                 
     def __getitem__(self, index):
         example = self.read_example_from_file(index=index)
@@ -155,7 +156,7 @@ class DocBankDataset(Dataset):
                 structures.append(DocBankMetaData.label2id(structure))
         
         example = DocBankMetaData(
-            filepath = os.path.join(self.img_dir, img_file),
+            filepath = os.path.join(self.txt_dir, txt_file),
             pagesize = pagesize,
             words = words,
             bboxes = bboxes,
@@ -191,9 +192,9 @@ class DocBankDataset(Dataset):
                 - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
             `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
         """
-        filepath = example.filepath
+        # filepath = example.filepath
         pagesize = example.pagesize
-        width, height = pagesize
+        # width, height = pagesize
 
         tokens = []
         token_boxes = []
@@ -208,16 +209,15 @@ class DocBankDataset(Dataset):
             # actual_bboxes.extend([actual_bbox] * len(word_tokens))
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
             label_ids.extend(
-                [label] + [pad_token_label_id] * (len(word_tokens) - 1)
+                [label] + [pad_token_label_id] * (len(word_tokens) - 1) if len(word_tokens) > 0 else []
             )
 
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
-        special_tokens_count = 3 if sep_token_extra else 2
-        if len(tokens) > max_seq_length - special_tokens_count:
-            tokens = tokens[: (max_seq_length - special_tokens_count)]
-            token_boxes = token_boxes[: (max_seq_length - special_tokens_count)]
-            # actual_bboxes = actual_bboxes[: (max_seq_length - special_tokens_count)]
-            label_ids = label_ids[: (max_seq_length - special_tokens_count)]
+        # special_tokens_count = 3 if sep_token_extra else 2
+        tokens = [tokens[i * max_seq_length: min((i + 1) * max_seq_length, len(tokens))] for i in range(len(tokens) // max_seq_length + 1)]
+        token_boxes = [token_boxes[i * max_seq_length: min((i + 1) * max_seq_length, len(token_boxes))] for i in range(len(token_boxes) // max_seq_length + 1)]
+        # actual_bboxes = actual_bboxes[: (max_seq_length - special_tokens_count)]
+        label_ids = [label_ids[i * max_seq_length: min((i + 1) * max_seq_length, len(label_ids))] for i in range(len(label_ids) // max_seq_length + 1)]
 
         # The convention in BERT is:
         # (a) For sequence pairs:
@@ -237,65 +237,77 @@ class DocBankDataset(Dataset):
         # For classification tasks, the first vector (corresponding to [CLS]) is
         # used as as the "sentence vector". Note that this only makes sense because
         # the entire model is fine-tuned.
-        tokens += [sep_token]
-        token_boxes += [sep_token_box]
-        # actual_bboxes += [[0, 0, width, height]]
-        label_ids += [pad_token_label_id]
-        if sep_token_extra:
-            # roberta uses an extra separator b/w pairs of sentences
-            tokens += [sep_token]
-            token_boxes += [sep_token_box]
-            # actual_bboxes += [[0, 0, width, height]]
-            label_ids += [pad_token_label_id]
-        segment_ids = [sequence_a_segment_id] * len(tokens)
+        # tokens += [sep_token]
+        # token_boxes += [sep_token_box]
+        # # actual_bboxes += [[0, 0, width, height]]
+        # label_ids += [pad_token_label_id]
+        # if sep_token_extra:
+        #     # roberta uses an extra separator b/w pairs of sentences
+        #     tokens += [sep_token]
+        #     token_boxes += [sep_token_box]
+        #     # actual_bboxes += [[0, 0, width, height]]
+        #     label_ids += [pad_token_label_id]
+        # segment_ids = [sequence_a_segment_id] * len(tokens)
 
-        if cls_token_at_end:
-            tokens += [cls_token]
-            token_boxes += [cls_token_box]
-            # actual_bboxes += [[0, 0, width, height]]
-            label_ids += [pad_token_label_id]
-            segment_ids += [cls_token_segment_id]
-        else:
-            tokens = [cls_token] + tokens
-            token_boxes = [cls_token_box] + token_boxes
-            # actual_bboxes = [[0, 0, width, height]] + actual_bboxes
-            label_ids = [pad_token_label_id] + label_ids
-            segment_ids = [cls_token_segment_id] + segment_ids
+        # if cls_token_at_end:
+        #     tokens += [cls_token]
+        #     token_boxes += [cls_token_box]
+        #     # actual_bboxes += [[0, 0, width, height]]
+        #     label_ids += [pad_token_label_id]
+        #     segment_ids += [cls_token_segment_id]
+        # else:
+        #     tokens = [cls_token] + tokens
+        #     token_boxes = [cls_token_box] + token_boxes
+        #     # actual_bboxes = [[0, 0, width, height]] + actual_bboxes
+        #     label_ids = [pad_token_label_id] + label_ids
+        #     segment_ids = [cls_token_segment_id] + segment_ids
 
-        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        input_ids = [self.tokenizer.convert_tokens_to_ids(t) for t in tokens]
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
-        input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+        input_mask = [[1 if mask_padding_with_zero else 0] * len(i) for i in input_ids]
 
         # Zero-pad up to the sequence length.
-        padding_length = max_seq_length - len(input_ids)
+        padding_length = max_seq_length - len(input_ids[-1])
         if pad_on_left:
-            input_ids = ([pad_token] * padding_length) + input_ids
-            input_mask = (
+            input_ids[-1] = ([pad_token] * padding_length) + input_ids[-1]
+            input_mask[-1] = (
                 [0 if mask_padding_with_zero else 1] * padding_length
-            ) + input_mask
-            segment_ids = ([pad_token_segment_id] * padding_length) + segment_ids
-            label_ids = ([pad_token_label_id] * padding_length) + label_ids
-            token_boxes = ([pad_token_box] * padding_length) + token_boxes
+            ) + input_mask[-1]
+            # segment_ids = ([pad_token_segment_id] * padding_length) + segment_ids
+            label_ids[-1] = ([pad_token_label_id] * padding_length) + label_ids[-1]
+            token_boxes[-1] = ([pad_token_box] * padding_length) + token_boxes[-1]
         else:
-            input_ids += [pad_token] * padding_length
-            input_mask += [0 if mask_padding_with_zero else 1] * padding_length
-            segment_ids += [pad_token_segment_id] * padding_length
-            label_ids += [pad_token_label_id] * padding_length
-            token_boxes += [pad_token_box] * padding_length
+            input_ids[-1] += [pad_token] * padding_length
+            input_mask[-1] += [0 if mask_padding_with_zero else 1] * padding_length
+            # segment_ids += [pad_token_segment_id] * padding_length
+            label_ids[-1] += [pad_token_label_id] * padding_length
+            token_boxes[-1] += [pad_token_box] * padding_length
 
-        assert len(input_ids) == max_seq_length
-        assert len(input_mask) == max_seq_length
-        assert len(segment_ids) == max_seq_length
-        assert len(label_ids) == max_seq_length
-        assert len(token_boxes) == max_seq_length
+        # if len(input_ids) > 10:
+        #     input_ids = input_ids[: 10]
+        #     input_mask = input_ids[: 10]
+        #     label_ids = label_ids[: 10]
+        #     token_boxes = token_boxes[: 10]
+
+        input_ids = input_ids[: 1]
+        input_mask = input_ids[: 1]
+        label_ids = label_ids[: 1]
+        token_boxes = token_boxes[: 1]
+
+        assert len(input_ids[-1]) == max_seq_length
+        assert len(input_mask[-1]) == max_seq_length
+        # assert len(segment_ids) == max_seq_length
+        assert len(label_ids[-1]) == max_seq_length
+        assert len(token_boxes[-1]) == max_seq_length
         
         return {
             'input_ids': input_ids,
             'attention_mask': input_mask,
             'label_ids': label_ids,
             'bbox': token_boxes,
+            # 'file': filepath
             # "image": example.img
         }
 
@@ -303,10 +315,10 @@ class DocBankDataset(Dataset):
 class DocBankCollator:
     def __call__(self, features):   
         batch = dict()
-        batch['labels'] = torch.tensor([feature['label_ids'] for feature in features], dtype=torch.int64)
-        batch['bbox'] = torch.tensor([feature['bbox'] for feature in features], dtype=torch.int64)
-        batch['input_ids'] = torch.tensor([feature['input_ids'] for feature in features], dtype=torch.int64)
-        batch['attention_mask'] = torch.tensor([feature['attention_mask'] for feature in features], dtype=torch.int64)
-        batch['token_type_ids'] = torch.zeros(batch['labels'].shape, dtype=torch.int64)
+        batch['labels'] = torch.tensor(list(chain(*[feature['label_ids'] for feature in features])), dtype=torch.int64)
+        batch['bbox'] = torch.tensor(list(chain(*[feature['bbox'] for feature in features])), dtype=torch.int32)
+        batch['input_ids'] = torch.tensor(list(chain(*[feature['input_ids'] for feature in features])), dtype=torch.int32)
+        batch['attention_mask'] = torch.tensor(list(chain(*[feature['attention_mask'] for feature in features])), dtype=torch.int32)
+        # batch['token_type_ids'] = torch.zeros(batch['labels'].shape, dtype=torch.int64)
         # batch['image'] = torch.tensor([feature['image'] for feature in features])
         return batch
