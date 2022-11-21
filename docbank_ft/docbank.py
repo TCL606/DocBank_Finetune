@@ -96,8 +96,8 @@ class DocBankDataset(Dataset):
             data = json.load(fp)
 
         self.basenames_list = [metadata['file_name'].replace('_ori.jpg', '') for metadata in data['images']]
-        if mode != 'train':
-            self.basenames_list = self.basenames_list[: 100]
+        # if mode != 'train':
+        #     self.basenames_list = self.basenames_list[: 100]
                 
     def __getitem__(self, index):
         example = self.read_example_from_file(index=index)
@@ -219,49 +219,6 @@ class DocBankDataset(Dataset):
         # actual_bboxes = actual_bboxes[: (max_seq_length - special_tokens_count)]
         label_ids = [label_ids[i * max_seq_length: min((i + 1) * max_seq_length, len(label_ids))] for i in range(len(label_ids) // max_seq_length + 1)]
 
-        # The convention in BERT is:
-        # (a) For sequence pairs:
-        #  tokens:   [CLS] is this jack ##son ##ville ? [SEP] no it is not . [SEP]
-        #  type_ids:   0   0  0    0    0     0       0   0   1  1  1  1   1   1
-        # (b) For single sequences:
-        #  tokens:   [CLS] the dog is hairy . [SEP]
-        #  type_ids:   0   0   0   0  0     0   0
-        #
-        # Where "type_ids" are used to indicate whether this is the first
-        # sequence or the second sequence. The embedding vectors for `type=0` and
-        # `type=1` were learned during pre-training and are added to the wordpiece
-        # embedding vector (and position vector). This is not *strictly* necessary
-        # since the [SEP] token unambiguously separates the sequences, but it makes
-        # it easier for the model to learn the concept of sequences.
-        #
-        # For classification tasks, the first vector (corresponding to [CLS]) is
-        # used as as the "sentence vector". Note that this only makes sense because
-        # the entire model is fine-tuned.
-        # tokens += [sep_token]
-        # token_boxes += [sep_token_box]
-        # # actual_bboxes += [[0, 0, width, height]]
-        # label_ids += [pad_token_label_id]
-        # if sep_token_extra:
-        #     # roberta uses an extra separator b/w pairs of sentences
-        #     tokens += [sep_token]
-        #     token_boxes += [sep_token_box]
-        #     # actual_bboxes += [[0, 0, width, height]]
-        #     label_ids += [pad_token_label_id]
-        # segment_ids = [sequence_a_segment_id] * len(tokens)
-
-        # if cls_token_at_end:
-        #     tokens += [cls_token]
-        #     token_boxes += [cls_token_box]
-        #     # actual_bboxes += [[0, 0, width, height]]
-        #     label_ids += [pad_token_label_id]
-        #     segment_ids += [cls_token_segment_id]
-        # else:
-        #     tokens = [cls_token] + tokens
-        #     token_boxes = [cls_token_box] + token_boxes
-        #     # actual_bboxes = [[0, 0, width, height]] + actual_bboxes
-        #     label_ids = [pad_token_label_id] + label_ids
-        #     segment_ids = [cls_token_segment_id] + segment_ids
-
         input_ids = [self.tokenizer.convert_tokens_to_ids(t) for t in tokens]
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
@@ -285,16 +242,16 @@ class DocBankDataset(Dataset):
             label_ids[-1] += [pad_token_label_id] * padding_length
             token_boxes[-1] += [pad_token_box] * padding_length
 
-        # if len(input_ids) > 10:
-        #     input_ids = input_ids[: 10]
-        #     input_mask = input_ids[: 10]
-        #     label_ids = label_ids[: 10]
-        #     token_boxes = token_boxes[: 10]
+        if len(input_ids) > 10:
+            input_ids = input_ids[: 10]
+            input_mask = input_ids[: 10]
+            label_ids = label_ids[: 10]
+            token_boxes = token_boxes[: 10]
 
-        input_ids = input_ids[: 1]
-        input_mask = input_ids[: 1]
-        label_ids = label_ids[: 1]
-        token_boxes = token_boxes[: 1]
+        # input_ids = input_ids[: 1]
+        # input_mask = input_ids[: 1]
+        # label_ids = label_ids[: 1]
+        # token_boxes = token_boxes[: 1]
 
         assert len(input_ids[-1]) == max_seq_length
         assert len(input_mask[-1]) == max_seq_length
