@@ -14,7 +14,7 @@ import layoutlmft.data.datasets.funsd
 import transformers
 from docbank import *
 from docbank_trainer import DocBankTrainer as Trainer
-from layoutlmft.data.data_args import DocBankDataTrainingArguments
+from docbank_args import DocBankDataTrainingArguments
 from layoutlmft.models.model_args import ModelArguments
 from transformers import (
     AutoConfig,
@@ -133,10 +133,6 @@ def main():
             "requirement"
         )
 
-    # Preprocessing the dataset
-    # Padding strategy
-    padding = "max_length" if data_args.pad_to_max_length else False
-    
     if training_args.do_train:
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
@@ -168,30 +164,60 @@ def main():
     metric = load_metric("seqeval")
     valid_labels = range(num_labels)
 
-    def compute_metrics(p):
+    def compute_metrics(p, others):
         predictions, labels = p
         predictions = np.argmax(predictions, axis=2)
+        bboxes = others
 
         # Remove ignored index (special tokens)
-        true_predictions = list(chain(*[
+        true_predictions = np.array(list(chain(*[
             [p for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
-        ]))
-        true_labels = list(chain(*[
+        ])))
+        true_labels = np.array(list(chain(*[
             [l for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
-        ]))
+        ])))
+        true_bboxes = np.array(list(chain(*[
+            [b for (b, l) in zip(bbox, label) if l != -100]
+            for bbox, label in zip(bboxes, labels)
+        ])))
+
+        detect_area = np.zeros(num_labels)
+        truth_area = np.zeros(num_labels)
+        truth_in_detect_area = np.zeros(num_labels)
+        precision = np.zeros(num_labels)
+        recall = np.zeros(num_labels)
+        f1 = np.zeros(num_labels)
+
+        for i in range(true_labels.shape[0]):
+            area_box = (true_bboxes[i][2] - true_bboxes[i][0]) * (true_bboxes[i][3] - true_bboxes[i][1])
+            detect_area[true_predictions[i]] += area_box
+            truth_area[true_labels[i]] += area_box
+            if true_predictions[i] == true_labels[i]:
+                truth_in_detect_area[[true_labels[i]]] += area_box
+
+        for i in range(num_labels):
+            precision[i] = truth_in_detect_area[i] / detect_area[i]
+            recall[i] = truth_in_detect_area[i] / truth_area[i]
+            f1[i] = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
 
         rec_sco = recall_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
         pre_sco = precision_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
         f1_sco = f1_score(y_true=true_labels, y_pred=true_predictions, labels=valid_labels, average='micro')
         acc_sco = accuracy_score(y_true=true_labels, y_pred=true_predictions)
-        return {
-            "precision": pre_sco,
-            "recall": rec_sco,
-            "f1": f1_sco,
-            "accuracy": acc_sco,
-        }
+        
+
+        results = dict()
+        results["total micro precision"] = pre_sco
+        results["total micro recall"] = rec_sco
+        results["total micro f1"] = f1_sco
+        results["total accuracy"] = acc_sco
+        for i in range(num_labels):
+            results[label_list[i] + " precision"] = precision[i]
+            results[label_list[i] + " recall"] = recall[i]
+            results[label_list[i] + " f1"] = f1[i]
+        return results
 
     # Initialize our Trainer
     trainer = Trainer(

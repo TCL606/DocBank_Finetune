@@ -1,7 +1,7 @@
 #!/bin/bash
 
-model=microsoft/layoutlm-base-uncased # allenai/ivila-block-layoutlm-finetuned-docbank
-wandb_name=predict/layoutlm_random
+model=allenai/ivila-block-layoutlm-finetuned-docbank
+wandb_name=predict/layoutlm_ft_new_metrics
 
 cd /root/bqqi/changli/layoutlmft/docbank_ft
 

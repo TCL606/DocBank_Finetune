@@ -8,10 +8,11 @@ from dataclasses import dataclass
 import torch
 from torch.utils.data import Dataset
 import logging
-from layoutlmft.data.data_args import DocBankDataTrainingArguments
+from docbank_args import DocBankDataTrainingArguments
 import json
 from layoutlmft.data.utils import normalize_bbox
 from torch.nn import CrossEntropyLoss
+from layoutlmft.data.utils import load_image
 from transformers import (
     WEIGHTS_NAME,
     AdamW,
@@ -25,6 +26,7 @@ from transformers import (
     LayoutLMConfig,
     LayoutLMForTokenClassification
 )
+from detectron2.structures import ImageList
 
 logger = logging.getLogger('__name__')
 
@@ -115,7 +117,7 @@ class DocBankDataset(Dataset):
             # pad on the left for xlnet
             pad_token=self.tokenizer.convert_tokens_to_ids([self.tokenizer.pad_token])[0],
             pad_token_segment_id=4 if self.args.model_type in ["xlnet"] else 0,
-            pad_token_label_id=self.pad_token_label_id
+            pad_token_label_id=self.pad_token_label_id,
         )
         return feature
 
@@ -133,8 +135,7 @@ class DocBankDataset(Dataset):
         fontnames = []
         structures = []
 
-        im = Image.open(os.path.join(self.img_dir, img_file))
-        pagesize = im.size
+        im, pagesize = load_image(os.path.join(self.img_dir, img_file))
 
         with open(os.path.join(self.txt_dir, txt_file), 'r', encoding='utf8') as fp:
             for line in fp.readlines():
@@ -196,30 +197,31 @@ class DocBankDataset(Dataset):
         pagesize = example.pagesize
         # width, height = pagesize
 
-        tokens = []
+        input_ids = []
         token_boxes = []
         # actual_bboxes = []
         label_ids = []
         for word, label, box in zip(
             example.words, example.structures, example.bboxes #, example.actual_bboxes
         ):
-            word_tokens = self.tokenizer.tokenize(word)
-            tokens.extend(word_tokens)
-            token_boxes.extend([box] * len(word_tokens))
-            # actual_bboxes.extend([actual_bbox] * len(word_tokens))
-            # Use the real label id for the first token of the word, and padding ids for the remaining tokens
-            label_ids.extend(
-                [label] + [pad_token_label_id] * (len(word_tokens) - 1) if len(word_tokens) > 0 else []
-            )
+            if word == '##LTLine##' or word == '##LTFigure##':
+                # word_tokens = [word]
+                # input_ids.append(pad_token_label_id)
+                pass
+            else:
+                word_tokens = self.tokenizer.tokenize(word)
+                input_ids.extend([self.tokenizer.convert_tokens_to_ids(t) for t in word_tokens])
+                token_boxes.extend([box] * len(word_tokens))
+                label_ids.extend(
+                    [label] + [pad_token_label_id] * (len(word_tokens) - 1) if len(word_tokens) > 0 else []
+                )
 
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
         # special_tokens_count = 3 if sep_token_extra else 2
-        tokens = [tokens[i * max_seq_length: min((i + 1) * max_seq_length, len(tokens))] for i in range(len(tokens) // max_seq_length + 1)]
+        # tokens = [tokens[i * max_seq_length: min((i + 1) * max_seq_length, len(tokens))] for i in range(len(tokens) // max_seq_length + 1)]
+        input_ids = [input_ids[i * max_seq_length: min((i + 1) * max_seq_length, len(input_ids))] for i in range(len(input_ids) // max_seq_length + 1)]
         token_boxes = [token_boxes[i * max_seq_length: min((i + 1) * max_seq_length, len(token_boxes))] for i in range(len(token_boxes) // max_seq_length + 1)]
-        # actual_bboxes = actual_bboxes[: (max_seq_length - special_tokens_count)]
         label_ids = [label_ids[i * max_seq_length: min((i + 1) * max_seq_length, len(label_ids))] for i in range(len(label_ids) // max_seq_length + 1)]
-
-        input_ids = [self.tokenizer.convert_tokens_to_ids(t) for t in tokens]
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
@@ -259,23 +261,30 @@ class DocBankDataset(Dataset):
         assert len(label_ids[-1]) == max_seq_length
         assert len(token_boxes[-1]) == max_seq_length
         
-        return {
-            'input_ids': input_ids,
-            'attention_mask': input_mask,
-            'label_ids': label_ids,
-            'bbox': token_boxes,
-            # 'file': filepath
-            # "image": example.img
-        }
+        if self.args.require_image:
+            return {
+                'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'label_ids': label_ids,
+                'bbox': token_boxes,
+                'image': example.img
+            }
+        else:
+            return {
+                'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'label_ids': label_ids,
+                'bbox': token_boxes,
+            }
 
 @dataclass
 class DocBankCollator:
     def __call__(self, features):   
         batch = dict()
-        batch['labels'] = torch.tensor(list(chain(*[feature['label_ids'] for feature in features])), dtype=torch.int64)
         batch['bbox'] = torch.tensor(list(chain(*[feature['bbox'] for feature in features])), dtype=torch.int32)
         batch['input_ids'] = torch.tensor(list(chain(*[feature['input_ids'] for feature in features])), dtype=torch.int32)
         batch['attention_mask'] = torch.tensor(list(chain(*[feature['attention_mask'] for feature in features])), dtype=torch.int32)
-        # batch['token_type_ids'] = torch.zeros(batch['labels'].shape, dtype=torch.int64)
-        # batch['image'] = torch.tensor([feature['image'] for feature in features])
+        batch['labels'] = torch.tensor(list(chain(*[feature['label_ids'] for feature in features])), dtype=torch.int64) #, torch.tensor(list(chain(*[feature['bbox'] for feature in features])), dtype=torch.int32))
+        if 'image' in features[0]:
+            batch['image'] = ImageList.from_tensors([torch.tensor(feature["image"]) for feature in features], 32)
         return batch
