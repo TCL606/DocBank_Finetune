@@ -87,6 +87,8 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
+    #label_list = ['abstract', 'author', 'caption', 'date', 'equation', 'figure', 'footer', 'list', 'paragraph', 'reference', 'section', 'table', 'title']
+    
     label_list = ['paragraph', 'title', 'equation', 'reference', 'section', 'list', 'table', 'caption', 'author', 'abstract', 'footer', 'date', 'figure']
     num_labels = len(label_list)
 

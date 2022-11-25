@@ -27,6 +27,7 @@ from transformers import (
     LayoutLMForTokenClassification
 )
 from detectron2.structures import ImageList
+import copy
 
 logger = logging.getLogger('__name__')
 
@@ -37,6 +38,39 @@ MODEL_CLASSES = {
 }
 
 class DocBankMetaData:
+
+    # label_dict = {
+    #     'abstract': 0,
+    #     'author': 1,
+    #     'caption': 2,
+    #     'date': 3,
+    #     'equation': 4,
+    #     'figure': 5,
+    #     'footer': 6,
+    #     'list': 7,
+    #     'paragraph': 8,
+    #     'reference': 9,
+    #     'section': 10,
+    #     'table': 11,
+    #     'title': 12
+    # }
+
+    label_dict = {
+        'paragraph': 0, 
+        'title': 1, 
+        'equation': 2, 
+        'reference': 3, 
+        'section': 4, 
+        'list': 5, 
+        'table': 6, 
+        'caption': 7, 
+        'author': 8, 
+        'abstract': 9, 
+        'footer': 10, 
+        'date': 11, 
+        'figure': 12
+    }
+
     def __init__(self, filepath, pagesize, words, bboxes, rgbs, fontnames, structures, img):
         assert len(words) == len(bboxes)
         assert len(bboxes) == len(rgbs)
@@ -55,34 +89,7 @@ class DocBankMetaData:
 
     @classmethod
     def label2id(cls, label) -> int:
-        if label == 'paragraph':
-            return 0
-        elif label == 'title':
-            return 1
-        elif label == 'equation':
-            return 2
-        elif label == 'reference':
-            return 3
-        elif label == 'section':
-            return 4
-        elif label == 'list':
-            return 5
-        elif label == 'table':
-            return 6
-        elif label == 'caption':
-            return 7
-        elif label == 'author':
-            return 8
-        elif label == 'abstract':
-            return 9
-        elif label == 'footer':
-            return 10
-        elif label == 'date':
-            return 11
-        elif label == 'figure':
-            return 12
-        else:
-            raise Exception('Invalid label!')       
+        return cls.label_dict[label]
 
 class DocBankDataset(Dataset):
     def __init__(self, args: DocBankDataTrainingArguments, tokenizer, mode: str):
@@ -98,8 +105,8 @@ class DocBankDataset(Dataset):
             data = json.load(fp)
 
         self.basenames_list = [metadata['file_name'].replace('_ori.jpg', '') for metadata in data['images']]
-        # if mode != 'train':
-        #     self.basenames_list = self.basenames_list[: 100]
+        if mode == 'valid':
+            self.basenames_list = self.basenames_list[: 10000]
                 
     def __getitem__(self, index):
         example = self.read_example_from_file(index=index)
@@ -204,10 +211,17 @@ class DocBankDataset(Dataset):
         for word, label, box in zip(
             example.words, example.structures, example.bboxes #, example.actual_bboxes
         ):
-            if word == '##LTLine##' or word == '##LTFigure##':
+            if word == '##LTLine##':
                 # word_tokens = [word]
                 # input_ids.append(pad_token_label_id)
                 pass
+            elif word == '##LTFigure##':
+                word_tokens = ['[unused0]']
+                input_ids.extend([self.tokenizer.convert_tokens_to_ids(t) for t in word_tokens])
+                token_boxes.extend([box] * len(word_tokens))
+                label_ids.extend(
+                    [label] + [pad_token_label_id] * (len(word_tokens) - 1) if len(word_tokens) > 0 else []
+                )
             else:
                 word_tokens = self.tokenizer.tokenize(word)
                 input_ids.extend([self.tokenizer.convert_tokens_to_ids(t) for t in word_tokens])
@@ -262,12 +276,13 @@ class DocBankDataset(Dataset):
         assert len(token_boxes[-1]) == max_seq_length
         
         if self.args.require_image:
+            images = [copy.deepcopy(example.img) for _ in range(len(input_ids))]
             return {
                 'input_ids': input_ids,
                 'attention_mask': input_mask,
                 'label_ids': label_ids,
                 'bbox': token_boxes,
-                'image': example.img
+                'image': images
             }
         else:
             return {
@@ -284,7 +299,7 @@ class DocBankCollator:
         batch['bbox'] = torch.tensor(list(chain(*[feature['bbox'] for feature in features])), dtype=torch.int32)
         batch['input_ids'] = torch.tensor(list(chain(*[feature['input_ids'] for feature in features])), dtype=torch.int32)
         batch['attention_mask'] = torch.tensor(list(chain(*[feature['attention_mask'] for feature in features])), dtype=torch.int32)
-        batch['labels'] = torch.tensor(list(chain(*[feature['label_ids'] for feature in features])), dtype=torch.int64) #, torch.tensor(list(chain(*[feature['bbox'] for feature in features])), dtype=torch.int32))
+        batch['labels'] = torch.tensor(list(chain(*[feature['label_ids'] for feature in features])), dtype=torch.int64)
         if 'image' in features[0]:
-            batch['image'] = ImageList.from_tensors([torch.tensor(feature["image"]) for feature in features], 32)
+            batch['image'] = ImageList.from_tensors(list(chain(*[[torch.tensor(f) for f in feature['image']] for feature in features])), 32)
         return batch
