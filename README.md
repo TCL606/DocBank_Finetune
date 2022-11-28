@@ -1,7 +1,7 @@
 # DocBank
 
 ## Code
-Code in docbank_ft is my code to get layoutlm baseline on DocBank dataset. Layoutlmft and Layoutlm are code in [Microsoft Repo](https://github.com/microsoft/unilm).
+Code in docbank_ft is my code to get layoutlm baseline on DocBank dataset. Examples and Layoutlm are code in [Microsoft Repo](https://github.com/microsoft/unilm).
 
 ## Installation
 
